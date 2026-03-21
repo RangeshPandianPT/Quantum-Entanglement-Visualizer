@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from qiskit.quantum_info import Statevector, DensityMatrix, partial_trace, entropy, SparsePauliOp
 from qiskit import QuantumCircuit
+from pydantic import BaseModel
+from typing import List, Optional
 import numpy as np
 
 app = FastAPI(title="Quantum Entanglement Visualizer API")
@@ -13,6 +15,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ──────────────────────────────────────────────
+# Pydantic models for circuit builder
+# ──────────────────────────────────────────────
+class GateOp(BaseModel):
+    gate: str                          # h, x, y, z, cx, cz, swap, ccx
+    targets: List[int]                 # target qubit(s)
+    controls: Optional[List[int]] = [] # control qubit(s) for multi-qubit gates
+
+class CircuitRequest(BaseModel):
+    num_qubits: int                    # 2-4
+    gates: List[GateOp]
+
+class CircuitStepRequest(CircuitRequest):
+    step: int                          # apply gates[0..step] inclusive
 
 # ──────────────────────────────────────────────
 # Helper: convert complex numpy array to a JSON-safe list
@@ -292,6 +309,151 @@ def get_entanglement_graph(state_id: str):
         "nodes": nodes,
         "edges": edges
     }
+
+# ──────────────────────────────────────────────
+# Circuit Builder — gate application helper
+# ──────────────────────────────────────────────
+SUPPORTED_GATES = {"h", "x", "y", "z", "cx", "cz", "swap", "ccx"}
+
+def _build_circuit(num_qubits: int, gates: List[GateOp], max_gates: int = None):
+    """Build a QuantumCircuit from a list of gate operations.
+       If max_gates is set, only apply gates[0..max_gates-1]."""
+    if num_qubits < 1 or num_qubits > 8:
+        raise HTTPException(400, "num_qubits must be between 1 and 8")
+    
+    qc = QuantumCircuit(num_qubits)
+    gate_list = gates[:max_gates] if max_gates is not None else gates
+
+    for g in gate_list:
+        name = g.gate.lower()
+        if name not in SUPPORTED_GATES:
+            raise HTTPException(400, f"Unsupported gate: {g.gate}")
+        
+        targets = g.targets
+        controls = g.controls or []
+
+        if name == "h":
+            qc.h(targets[0])
+        elif name == "x":
+            qc.x(targets[0])
+        elif name == "y":
+            qc.y(targets[0])
+        elif name == "z":
+            qc.z(targets[0])
+        elif name == "cx":
+            ctrl = controls[0] if controls else targets[0]
+            tgt  = targets[1]  if len(targets) > 1 else targets[0]
+            if controls:
+                tgt = targets[0]
+            qc.cx(ctrl, tgt)
+        elif name == "cz":
+            ctrl = controls[0] if controls else targets[0]
+            tgt  = targets[1]  if len(targets) > 1 else targets[0]
+            if controls:
+                tgt = targets[0]
+            qc.cz(ctrl, tgt)
+        elif name == "swap":
+            if len(targets) >= 2:
+                qc.swap(targets[0], targets[1])
+            else:
+                raise HTTPException(400, "SWAP requires two target qubits")
+        elif name == "ccx":
+            ctrls = controls if len(controls) >= 2 else targets[:2]
+            tgt = targets[0] if controls else targets[2] if len(targets) > 2 else targets[-1]
+            if len(controls) >= 2:
+                tgt = targets[0]
+            qc.ccx(ctrls[0], ctrls[1], tgt)
+
+    return qc
+
+
+def _full_circuit_response(qc: QuantumCircuit, num_qubits: int, step: int = None, total_gates: int = None):
+    """Compute full visualization payload from a QuantumCircuit."""
+    sv = Statevector.from_instruction(qc)
+    dm = DensityMatrix(sv)
+    probs = sv.probabilities_dict()
+
+    trace_sys = list(range(num_qubits - 1))  # trace out all but last qubit
+    if len(trace_sys) == 0:
+        trace_sys = [0]
+    reduced_dm = partial_trace(sv, trace_sys)
+    entanglement_entropy = float(entropy(reduced_dm, base=2))
+
+    # Bloch vectors for each qubit
+    all_qubits = list(range(num_qubits))
+    bloch_vectors = []
+    for qi in all_qubits:
+        trace_out = [q for q in all_qubits if q != qi]
+        if trace_out:
+            rdm = partial_trace(sv, trace_out)
+        else:
+            rdm = DensityMatrix(sv)
+        dm_2x2 = np.array(rdm.data, dtype=complex)
+        bvec = bloch_vector_from_dm(dm_2x2)
+        purity = float(np.real(np.trace(dm_2x2 @ dm_2x2)))
+        bvec["purity"] = purity
+        bvec["qubit"] = qi
+        bvec["label"] = f"Q{qi}"
+        bloch_vectors.append(bvec)
+
+    # Entanglement graph
+    nodes = []
+    for qi in all_qubits:
+        trace_out = [q for q in all_qubits if q != qi]
+        rdm = partial_trace(sv, trace_out)
+        dm_2x2 = np.array(rdm.data, dtype=complex)
+        purity = float(np.real(np.trace(dm_2x2 @ dm_2x2)))
+        nodes.append({
+            "id": qi, "label": f"Q{qi}",
+            "purity": purity, "is_entangled": purity < 0.999
+        })
+
+    edges = []
+    for i in range(num_qubits):
+        for j in range(i + 1, num_qubits):
+            ent = pairwise_entropy(sv, num_qubits, i, j)
+            weight = min(ent / 2.0, 1.0)
+            edges.append({
+                "source": i, "target": j,
+                "entropy": ent, "weight": weight
+            })
+
+    result = {
+        "name": "Custom Circuit",
+        "qubits": num_qubits,
+        "statevector": to_serializable(sv.data),
+        "basis_labels": [format(i, f"0{num_qubits}b") for i in range(2**num_qubits)],
+        "probabilities": {k: float(v) for k, v in probs.items()},
+        "density_matrix": matrix_to_serializable(dm.data),
+        "entanglement_entropy": entanglement_entropy,
+        "bloch_vectors": bloch_vectors,
+        "entanglement_graph": {"nodes": nodes, "edges": edges},
+    }
+    if step is not None:
+        result["step"] = step
+    if total_gates is not None:
+        result["total_gates"] = total_gates
+    return result
+
+
+# ──────────────────────────────────────────────
+# Circuit Builder Endpoints
+# ──────────────────────────────────────────────
+@app.post("/api/circuit/run")
+def run_circuit(req: CircuitRequest):
+    """Build and run the full circuit, return complete visualization data."""
+    qc = _build_circuit(req.num_qubits, req.gates)
+    return _full_circuit_response(qc, req.num_qubits, total_gates=len(req.gates))
+
+
+@app.post("/api/circuit/step")
+def step_circuit(req: CircuitStepRequest):
+    """Build circuit up to step N (inclusive), return state at that point."""
+    if req.step < 0 or req.step >= len(req.gates):
+        raise HTTPException(400, f"step must be between 0 and {len(req.gates) - 1}")
+    qc = _build_circuit(req.num_qubits, req.gates, max_gates=req.step + 1)
+    return _full_circuit_response(qc, req.num_qubits, step=req.step, total_gates=len(req.gates))
+
 
 if __name__ == "__main__":
     import uvicorn
