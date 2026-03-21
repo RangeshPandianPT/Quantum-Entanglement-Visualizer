@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import './App.css'
 import BlochSphere from './components/BlochSphere.jsx'
@@ -6,6 +6,11 @@ import AmplitudeChart from './components/AmplitudeChart.jsx'
 import DensityMatrix from './components/DensityMatrix.jsx'
 import EntanglementGraph from './components/EntanglementGraph.jsx'
 import QSphere from './components/QSphere.jsx'
+import CircuitBuilder from './components/CircuitBuilder.jsx'
+import GuidedTour from './components/GuidedTour.jsx'
+import EntanglementMeter from './components/EntanglementMeter.jsx'
+import StateNotation from './components/StateNotation.jsx'
+import VizTooltip from './components/VizTooltip.jsx'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -15,6 +20,42 @@ const TABS = [
   { id: 'density',      label: '⬛ Density Matrix'  },
   { id: 'entanglement', label: '⬡ Entanglement'   },
   { id: 'qsphere',      label: '◉ Q-Sphere'       },
+]
+
+/* ── Preset Demo Circuits ──────────────────────────── */
+const PRESET_DEMOS = [
+  {
+    id: 'bell',
+    label: '⚛ Create Bell Pair',
+    desc: '|Φ⁺⟩ = (|00⟩+|11⟩)/√2',
+    numQubits: 2,
+    gates: [
+      { gate: 'h', targets: [0], controls: [] },
+      { gate: 'cx', targets: [1], controls: [0] },
+    ],
+  },
+  {
+    id: 'ghz',
+    label: '⬡ Create GHZ State',
+    desc: '(|000⟩+|111⟩)/√2',
+    numQubits: 3,
+    gates: [
+      { gate: 'h', targets: [0], controls: [] },
+      { gate: 'cx', targets: [1], controls: [0] },
+      { gate: 'cx', targets: [2], controls: [0] },
+    ],
+  },
+  {
+    id: 'w',
+    label: '🌀 Create W State',
+    desc: '(|001⟩+|010⟩+|100⟩)/√3',
+    numQubits: 3,
+    gates: [
+      // Approximate W state via circuit: Ry rotations + CNOTs
+      // We'll use the backend's preset endpoint instead for accuracy
+    ],
+    usePreset: 'w', // Flag to use /api/state/w endpoint instead
+  },
 ]
 
 function StateCard({ state, selected, onClick }) {
@@ -41,6 +82,14 @@ export default function App() {
   const [loadingBloch, setLoadingBloch]     = useState(false)
   const [loadingGraph, setLoadingGraph]     = useState(false)
   const [activeTab, setActiveTab]     = useState('bloch')
+  const [showTooltip, setShowTooltip] = useState(true)
+
+  // Circuit builder state
+  const [circuitResult, setCircuitResult] = useState(null)
+  const [vizSource, setVizSource]    = useState('preset') // 'preset' | 'circuit'
+
+  // Ref to CircuitBuilder for guided tour actions
+  const circuitRef = useRef(null)
 
   // Initial load
   useEffect(() => {
@@ -57,6 +106,8 @@ export default function App() {
   useEffect(() => {
     if (!selected) return
 
+    setVizSource('preset')
+    setCircuitResult(null)
     setLoadingDetail(true)
     setLoadingBloch(true)
     setLoadingGraph(true)
@@ -77,6 +128,70 @@ export default function App() {
       .finally(() => setLoadingGraph(false))
   }, [selected])
 
+  // Handle circuit result
+  const handleCircuitResult = (data) => {
+    setVizSource('circuit')
+    setSelected(null)
+    setCircuitResult(data)
+    setDetail({
+      name: data.name,
+      qubits: data.qubits,
+      statevector: data.statevector,
+      basis_labels: data.basis_labels,
+      probabilities: data.probabilities,
+      density_matrix: data.density_matrix,
+      entanglement_entropy: data.entanglement_entropy,
+    })
+    setBlochData({
+      state_id: 'circuit',
+      name: data.name,
+      qubits: data.qubits,
+      bloch_vectors: data.bloch_vectors,
+    })
+    setGraphData({
+      state_id: 'circuit',
+      name: data.name,
+      qubits: data.qubits,
+      nodes: data.entanglement_graph.nodes,
+      edges: data.entanglement_graph.edges,
+    })
+    setLoadingDetail(false)
+    setLoadingBloch(false)
+    setLoadingGraph(false)
+  }
+
+  // Handle preset demo button clicks
+  const handlePresetDemo = async (preset) => {
+    if (preset.usePreset) {
+      // Use the predefined backend state endpoint
+      setSelected(preset.usePreset)
+      return
+    }
+    // Run circuit via API
+    try {
+      const res = await axios.post(`${API_BASE}/api/circuit/run`, {
+        num_qubits: preset.numQubits, gates: preset.gates,
+      })
+      handleCircuitResult(res.data)
+    } catch (err) {
+      console.error('Preset demo failed:', err)
+    }
+  }
+
+  // Handle guided tour actions
+  const handleTourAction = (action) => {
+    if (circuitRef.current) {
+      circuitRef.current.tourAction(action)
+    }
+  }
+
+  // Derived flags
+  const showViz = vizSource === 'circuit' ? !!circuitResult : !!selected
+  const vizDetail   = detail
+  const vizBloch    = blochData
+  const vizGraph    = graphData
+  const isLoading   = loadingDetail || loadingBloch || loadingGraph
+
   return (
     <div className="app">
       {/* ── Header ─────────────────────────── */}
@@ -89,15 +204,49 @@ export default function App() {
               <p>Interactive exploration of multi-qubit entangled states</p>
             </div>
           </div>
-          <div className={`api-badge ${apiStatus}`}>
-            <span className="dot" />
-            {apiStatus === 'checking' ? 'Connecting…'
-              : apiStatus === 'online' ? 'API Online' : 'API Offline'}
+          <div className="header-right">
+            <GuidedTour onAction={handleTourAction} />
+            <div className={`api-badge ${apiStatus}`}>
+              <span className="dot" />
+              {apiStatus === 'checking' ? 'Connecting…'
+                : apiStatus === 'online' ? 'API Online' : 'API Offline'}
+            </div>
           </div>
         </div>
       </header>
 
       <main className="main">
+        {/* ── Preset Demo Buttons ──────────────── */}
+        <section className="preset-demos">
+          <div className="demos-header">
+            <h2>🚀 Quick Start — Try a Preset</h2>
+            <p className="demos-subtitle">
+              Instantly generate a famous entangled state and see all visualizations update
+            </p>
+          </div>
+          <div className="demos-grid">
+            {PRESET_DEMOS.map(preset => (
+              <button
+                key={preset.id}
+                className="demo-btn"
+                onClick={() => handlePresetDemo(preset)}
+                disabled={apiStatus !== 'online'}
+              >
+                <span className="demo-label">{preset.label}</span>
+                <span className="demo-desc">{preset.desc}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* ── Circuit Builder ──────────────────── */}
+        <CircuitBuilder ref={circuitRef} onCircuitResult={handleCircuitResult} />
+
+        {/* ── Divider ─────────────────────────── */}
+        <div className="section-divider">
+          <span>or select a preset state</span>
+        </div>
+
         {/* ── Intro ──────────────────────────── */}
         <section className="intro">
           <div className="scope-pills">
@@ -132,29 +281,38 @@ export default function App() {
         </section>
 
         {/* ── Visualization panel ─────────────── */}
-        {selected && (
+        {showViz && (
           <section className="detail-panel">
-            {/* State header */}
-            {detail && !loadingDetail && (
-              <div className="state-header-row">
-                <div>
-                  <h2>{detail.name}</h2>
-                  <p className="detail-subtitle">
-                    {detail.qubits}-qubit state · {detail.basis_labels.length} basis vectors
-                  </p>
+            {/* State header + entanglement meter */}
+            {vizDetail && !isLoading && (
+              <>
+                <div className="state-header-row">
+                  <div>
+                    <h2>{vizDetail.name}</h2>
+                    <p className="detail-subtitle">
+                      {vizDetail.qubits}-qubit state · {vizDetail.basis_labels.length} basis vectors
+                      {vizSource === 'circuit' && <span className="source-badge">Circuit</span>}
+                    </p>
+                  </div>
+                  <div
+                    className="entropy-badge"
+                    title="Von Neumann Entropy — measures degree of entanglement"
+                  >
+                    <span className="entropy-label">Entanglement Entropy</span>
+                    <span className="entropy-value">
+                      {vizDetail.entanglement_entropy.toFixed(3)} S
+                    </span>
+                  </div>
                 </div>
-                <div
-                  className="entropy-badge"
-                  title="Von Neumann Entropy — measures degree of entanglement"
-                >
-                  <span className="entropy-label">Entanglement Entropy</span>
-                  <span className="entropy-value">
-                    {detail.entanglement_entropy.toFixed(3)} S
-                  </span>
-                </div>
-              </div>
+
+                {/* State Notation */}
+                <StateNotation detail={vizDetail} />
+
+                {/* Entanglement Meter */}
+                <EntanglementMeter entropy={vizDetail.entanglement_entropy} />
+              </>
             )}
-            {loadingDetail && <div className="loading-spinner">Computing quantum state…</div>}
+            {isLoading && <div className="loading-spinner">Computing quantum state…</div>}
 
             {/* Tab bar */}
             <div className="viz-tabs" role="tablist">
@@ -169,29 +327,39 @@ export default function App() {
                   {tab.label}
                 </button>
               ))}
+              <button
+                className={`viz-tab tooltip-toggle ${showTooltip ? 'active' : ''}`}
+                onClick={() => setShowTooltip(!showTooltip)}
+                title="Toggle visualization explanations"
+              >
+                {showTooltip ? '💡 Hide Info' : '💡 Show Info'}
+              </button>
             </div>
+
+            {/* Tooltip explanation */}
+            {showTooltip && <VizTooltip tabId={activeTab} />}
 
             {/* Tab panels */}
             <div className="viz-panel">
               {activeTab === 'bloch' && (
-                <BlochSphere blochData={blochData} loading={loadingBloch} />
+                <BlochSphere blochData={vizBloch} loading={loadingBloch} />
               )}
               {activeTab === 'amplitudes' && (
-                detail
-                  ? <AmplitudeChart detail={detail} />
+                vizDetail
+                  ? <AmplitudeChart detail={vizDetail} />
                   : <div className="viz-loading">Loading amplitude data…</div>
               )}
               {activeTab === 'density' && (
-                detail
-                  ? <DensityMatrix detail={detail} />
+                vizDetail
+                  ? <DensityMatrix detail={vizDetail} />
                   : <div className="viz-loading">Loading density matrix…</div>
               )}
               {activeTab === 'entanglement' && (
-                <EntanglementGraph graphData={graphData} loading={loadingGraph} />
+                <EntanglementGraph graphData={vizGraph} loading={loadingGraph} />
               )}
               {activeTab === 'qsphere' && (
-                detail
-                  ? <QSphere detail={detail} />
+                vizDetail
+                  ? <QSphere detail={vizDetail} />
                   : <div className="viz-loading">Loading Q-Sphere data…</div>
               )}
             </div>
@@ -200,8 +368,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <p>Phase 3 Complete · Bloch Sphere · Amplitudes · Density Matrix · Entanglement Graph · Q-Sphere</p>
-        <p style={{ marginTop: '4px' }}>React + Vite + D3 + Three.js / Python + FastAPI + Qiskit</p>
+        <p>Phase 5 · Quantum Entanglement Visualizer · Built with React + Vite + D3 + Three.js / Python + FastAPI + Qiskit</p>
       </footer>
     </div>
   )
