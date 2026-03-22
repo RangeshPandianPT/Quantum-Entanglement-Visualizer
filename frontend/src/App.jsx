@@ -11,6 +11,8 @@ import GuidedTour from './components/GuidedTour.jsx'
 import EntanglementMeter from './components/EntanglementMeter.jsx'
 import StateNotation from './components/StateNotation.jsx'
 import VizTooltip from './components/VizTooltip.jsx'
+import ChallengesModal from './components/ChallengesModal.jsx'
+import BadgeToast from './components/BadgeToast.jsx'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -84,6 +86,26 @@ export default function App() {
   const [activeTab, setActiveTab]     = useState('bloch')
   const [showTooltip, setShowTooltip] = useState(true)
 
+  // Gamification state
+  const [puzzles, setPuzzles] = useState([])
+  const [dailyChallenge, setDailyChallenge] = useState(null)
+  const [isChallengesOpen, setIsChallengesOpen] = useState(false)
+  const [activePuzzle, setActivePuzzle] = useState(null)
+  const [earnedBadges, setEarnedBadges] = useState(() => {
+    const saved = localStorage.getItem('quantum_badges')
+    return saved ? JSON.parse(saved) : []
+  })
+  const [toastBadge, setToastBadge] = useState(null)
+
+  const handleEarnBadge = (badgeName) => {
+    if (!earnedBadges.includes(badgeName)) {
+      const updated = [...earnedBadges, badgeName]
+      setEarnedBadges(updated)
+      localStorage.setItem('quantum_badges', JSON.stringify(updated))
+    }
+    setToastBadge(badgeName)
+  }
+
   // Circuit builder state
   const [circuitResult, setCircuitResult] = useState(null)
   const [vizSource, setVizSource]    = useState('preset') // 'preset' | 'circuit'
@@ -96,6 +118,14 @@ export default function App() {
     axios.get(`${API_BASE}/api/health`)
       .then(() => {
         setApiStatus('online')
+        // Fetch puzzles
+        axios.get(`${API_BASE}/api/puzzles`)
+          .then(res => {
+            setPuzzles(res.data.puzzles)
+            setDailyChallenge(res.data.daily_challenge)
+          })
+          .catch(err => console.error("Error fetching puzzles:", err))
+
         return axios.get(`${API_BASE}/api/quantum-states`)
       })
       .then(res => setStates(res.data.states))
@@ -205,6 +235,9 @@ export default function App() {
             </div>
           </div>
           <div className="header-right">
+            <button className="challenges-nav-btn" onClick={() => setIsChallengesOpen(true)}>
+              🎮 Challenges
+            </button>
             <GuidedTour onAction={handleTourAction} />
             <div className={`api-badge ${apiStatus}`}>
               <span className="dot" />
@@ -240,7 +273,13 @@ export default function App() {
         </section>
 
         {/* ── Circuit Builder ──────────────────── */}
-        <CircuitBuilder ref={circuitRef} onCircuitResult={handleCircuitResult} />
+        <CircuitBuilder 
+          ref={circuitRef} 
+          onCircuitResult={handleCircuitResult}
+          activePuzzle={activePuzzle}
+          onClearPuzzle={() => setActivePuzzle(null)}
+          onEarnBadge={handleEarnBadge}
+        />
 
         {/* ── Divider ─────────────────────────── */}
         <div className="section-divider">
@@ -368,8 +407,26 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <p>Phase 5 · Quantum Entanglement Visualizer · Built with React + Vite + D3 + Three.js / Python + FastAPI + Qiskit</p>
+        <p>Phase 8 · Quantum Entanglement Visualizer · Built with React + Vite + D3 + Three.js / Python + FastAPI + Qiskit</p>
       </footer>
+
+      {/* ── Gamification Modals & Toasts ────────────── */}
+      <ChallengesModal
+        isOpen={isChallengesOpen}
+        onClose={() => setIsChallengesOpen(false)}
+        puzzles={puzzles}
+        dailyChallenge={dailyChallenge}
+        earnedBadges={earnedBadges}
+        onSelectPuzzle={(puzzle) => {
+          setActivePuzzle(puzzle)
+          setIsChallengesOpen(false)
+        }}
+      />
+      <BadgeToast 
+        badge={toastBadge} 
+        show={!!toastBadge} 
+        onClose={() => setToastBadge(null)} 
+      />
     </div>
   )
 }

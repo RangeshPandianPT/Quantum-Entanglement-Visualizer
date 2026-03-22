@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from qiskit.quantum_info import Statevector, DensityMatrix, partial_trace, entropy, SparsePauliOp
+from qiskit.quantum_info import Statevector, DensityMatrix, partial_trace, entropy, SparsePauliOp, state_fidelity
 from qiskit import QuantumCircuit
 from pydantic import BaseModel
 from typing import List, Optional
@@ -30,6 +30,9 @@ class CircuitRequest(BaseModel):
 
 class CircuitStepRequest(CircuitRequest):
     step: int                          # apply gates[0..step] inclusive
+
+class VerifyPuzzleRequest(CircuitRequest):
+    puzzle_id: str
 
 # ──────────────────────────────────────────────
 # Helper: convert complex numpy array to a JSON-safe list
@@ -453,6 +456,193 @@ def step_circuit(req: CircuitStepRequest):
         raise HTTPException(400, f"step must be between 0 and {len(req.gates) - 1}")
     qc = _build_circuit(req.num_qubits, req.gates, max_gates=req.step + 1)
     return _full_circuit_response(qc, req.num_qubits, step=req.step, total_gates=len(req.gates))
+
+
+# ──────────────────────────────────────────────
+# Phase 8: Gamification / Puzzles
+# ──────────────────────────────────────────────
+
+PUZZLES = [
+    {
+        "id": "bell_phi_plus",
+        "title": "First Bell State",
+        "description": "Create the |Φ+⟩ Bell state from the starting |00⟩ state.",
+        "target_state": "bell_phi_plus",
+        "expected_qubits": 2,
+        "max_gates": 2,
+        "hints": [
+            "Hint 1: You'll need a Hadamard gate to create a superposition.",
+            "Hint 2: Use a CNOT gate to entangle the qubits."
+        ],
+        "badge": "First Bell State!"
+    },
+    {
+        "id": "ghz_state",
+        "title": "GHZ Master",
+        "description": "Create a 3-qubit GHZ state.",
+        "target_state": "ghz",
+        "expected_qubits": 3,
+        "max_gates": 3,
+        "hints": [
+            "Hint 1: Start by putting the first qubit into superposition.",
+            "Hint 2: Entangle the first qubit with the second, then the first with the third."
+        ],
+        "badge": "GHZ Master"
+    },
+    {
+        "id": "w_state",
+        "title": "Explorer of W-States",
+        "description": "Create a 3-qubit W state.",
+        "target_state": "w",
+        "expected_qubits": 3,
+        "max_gates": 15,
+        "hints": [
+            "Hint 1: W state preparation is tricky! You might need to approximate or use many gates.",
+            "Hint 2: In a real setup you'd use controlled Y-rotations, but try your best with standard gates!"
+        ],
+        "badge": "Explorer of W-States"
+    }
+]
+
+@app.get("/api/puzzles")
+def get_puzzles():
+    """Returns available challenges and daily challenge."""
+    return {"puzzles": PUZZLES, "daily_challenge": PUZZLES[0]}
+
+@app.post("/api/puzzles/verify")
+def verify_puzzle(req: VerifyPuzzleRequest):
+    """
+    Simulates the circuit and calculates Statevector fidelity
+    against the target puzzle state. Verifies constraints.
+    """
+    puzzle = next((p for p in PUZZLES if p["id"] == req.puzzle_id), None)
+    if not puzzle:
+        raise HTTPException(404, "Puzzle not found")
+        
+    if req.num_qubits != puzzle["expected_qubits"]:
+        return {"success": False, "message": f"Wait! This puzzle requires {puzzle['expected_qubits']} qubits."}
+        
+    if len(req.gates) > puzzle["max_gates"]:
+        return {"success": False, "message": f"Too many gates! The limit is {puzzle['max_gates']} gates."}
+        
+    try:
+        qc = _build_circuit(req.num_qubits, req.gates)
+        user_sv = Statevector.from_instruction(qc)
+    except Exception as e:
+        return {"success": False, "message": f"Error building circuit: {str(e)}"}
+        
+    # Get target state
+    try:
+        target_sv, _, _ = get_sv(puzzle["target_state"])
+    except HTTPException:
+        return {"success": False, "message": "Target quantum state for this puzzle is misconfigured."}
+    
+    # Calculate fidelity using imported state_fidelity
+    fidelity = float(state_fidelity(user_sv, target_sv))
+    
+    # Needs to be extremely close to 1
+    is_success = fidelity > 0.999
+    
+    if is_success:
+        return {
+            "success": True, 
+            "fidelity": fidelity, 
+            "badge": puzzle["badge"], 
+            "message": "Congratulations! You reached the target state.",
+            "gates_used": len(req.gates)
+        }
+    else:
+        return {
+            "success": False, 
+            "fidelity": fidelity, 
+            "message": "Not quite there yet. The state doesn't match the target."
+        }
+
+# ──────────────────────────────────────────────
+# Phase 6: Measurement Simulation + QASM Export
+# ──────────────────────────────────────────────
+
+class MeasureRequest(BaseModel):
+    num_qubits: int
+    gates: List[GateOp]
+
+GATE_QASM_MAP = {
+    "h":    lambda g: f"h q[{g.targets[0]}];",
+    "x":    lambda g: f"x q[{g.targets[0]}];",
+    "y":    lambda g: f"y q[{g.targets[0]}];",
+    "z":    lambda g: f"z q[{g.targets[0]}];",
+    "cx":   lambda g: f"cx q[{(g.controls or [g.targets[0]])[0]}],q[{g.targets[0] if g.controls else g.targets[1]}];",
+    "cz":   lambda g: f"cz q[{(g.controls or [g.targets[0]])[0]}],q[{g.targets[0] if g.controls else g.targets[1]}];",
+    "swap": lambda g: f"swap q[{g.targets[0]}],q[{g.targets[1]}];",
+    "ccx":  lambda g: f"ccx q[{(g.controls or g.targets[:2])[0]}],q[{(g.controls or g.targets[:2])[1]}],q[{g.targets[0] if g.controls else g.targets[2]}];",
+}
+
+@app.post("/api/circuit/measure")
+def measure_circuit(req: MeasureRequest):
+    """
+    Simulate a quantum measurement (wavefunction collapse).
+    Builds the circuit, extracts the statevector, then samples
+    one outcome proportional to its Born-rule probability.
+    Returns the measured bitstring, collapsed statevector, and original probabilities.
+    """
+    qc = _build_circuit(req.num_qubits, req.gates)
+    sv = Statevector.from_instruction(qc)
+    probs_dict = sv.probabilities_dict()
+
+    # Ensure all basis states are present (with 0 prob if absent)
+    all_labels = [format(i, f"0{req.num_qubits}b") for i in range(2**req.num_qubits)]
+    all_probs   = {lbl: float(probs_dict.get(lbl, 0.0)) for lbl in all_labels}
+
+    states = list(all_probs.keys())
+    weights = np.array(list(all_probs.values()), dtype=float)
+    # Re-normalise to avoid floating point drift
+    weights /= weights.sum()
+
+    # Sample one outcome using Born rule
+    measured_idx = int(np.random.choice(len(states), p=weights))
+    measured_state = states[measured_idx]
+
+    # Build collapsed statevector (all amplitude on measured outcome)
+    collapsed_sv = np.zeros(2**req.num_qubits, dtype=complex)
+    collapsed_sv[int(measured_state, 2)] = 1.0
+
+    return {
+        "measured_state": measured_state,
+        "all_probabilities": all_probs,
+        "collapsed_statevector": to_serializable(collapsed_sv),
+        "basis_labels": all_labels,
+        "num_qubits": req.num_qubits,
+    }
+
+
+@app.post("/api/circuit/qasm")
+def export_qasm(req: CircuitRequest):
+    """
+    Export the circuit as OpenQASM 2.0 source code.
+    Returns a plain-text QASM string ready for download.
+    """
+    n = req.num_qubits
+    lines = [
+        "OPENQASM 2.0;",
+        'include "qelib1.inc";',
+        f"qreg q[{n}];",
+        f"creg c[{n}];",
+        "",
+    ]
+    for g in req.gates:
+        name = g.gate.lower()
+        if name not in GATE_QASM_MAP:
+            lines.append(f"// unsupported gate: {g.gate}")
+            continue
+        lines.append(GATE_QASM_MAP[name](g))
+
+    # Add measurement
+    lines.append("")
+    for i in range(n):
+        lines.append(f"measure q[{i}] -> c[{i}];")
+
+    qasm_str = "\n".join(lines)
+    return {"qasm": qasm_str, "num_qubits": n, "num_gates": len(req.gates)}
 
 
 if __name__ == "__main__":
