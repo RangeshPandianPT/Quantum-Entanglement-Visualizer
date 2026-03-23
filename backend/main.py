@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import numpy as np
 
+from algorithms_data import ALGORITHMS
+
 app = FastAPI(title="Quantum Entanglement Visualizer API")
 
 app.add_middleware(
@@ -20,9 +22,10 @@ app.add_middleware(
 # Pydantic models for circuit builder
 # ──────────────────────────────────────────────
 class GateOp(BaseModel):
-    gate: str                          # h, x, y, z, cx, cz, swap, ccx
+    gate: str                          # h, x, y, z, cx, cz, swap, ccx, cp, rx, ry, rz
     targets: List[int]                 # target qubit(s)
     controls: Optional[List[int]] = [] # control qubit(s) for multi-qubit gates
+    params: Optional[List[float]] = [] # parameters like angles for rotational gates
 
 class CircuitRequest(BaseModel):
     num_qubits: int                    # 2-4
@@ -316,7 +319,7 @@ def get_entanglement_graph(state_id: str):
 # ──────────────────────────────────────────────
 # Circuit Builder — gate application helper
 # ──────────────────────────────────────────────
-SUPPORTED_GATES = {"h", "x", "y", "z", "cx", "cz", "swap", "ccx"}
+SUPPORTED_GATES = {"h", "x", "y", "z", "cx", "cz", "swap", "ccx", "cp", "rx", "ry", "rz"}
 
 def _build_circuit(num_qubits: int, gates: List[GateOp], max_gates: int = None):
     """Build a QuantumCircuit from a list of gate operations.
@@ -366,6 +369,21 @@ def _build_circuit(num_qubits: int, gates: List[GateOp], max_gates: int = None):
             if len(controls) >= 2:
                 tgt = targets[0]
             qc.ccx(ctrls[0], ctrls[1], tgt)
+        elif name == "cp":
+            ctrl = controls[0] if controls else targets[0]
+            tgt = targets[1] if len(targets) > 1 else targets[0]
+            if controls: tgt = targets[0]
+            theta = g.params[0] if g.params else 0.0
+            qc.cp(theta, ctrl, tgt)
+        elif name == "rx":
+            theta = g.params[0] if g.params else 0.0
+            qc.rx(theta, targets[0])
+        elif name == "ry":
+            theta = g.params[0] if g.params else 0.0
+            qc.ry(theta, targets[0])
+        elif name == "rz":
+            theta = g.params[0] if g.params else 0.0
+            qc.rz(theta, targets[0])
 
     return qc
 
@@ -644,6 +662,11 @@ def export_qasm(req: CircuitRequest):
     qasm_str = "\n".join(lines)
     return {"qasm": qasm_str, "num_qubits": n, "num_gates": len(req.gates)}
 
+
+@app.get("/api/algorithms")
+def get_algorithms():
+    """Returns the list of famous quantum algorithms with predefined step-by-step walkthroughs."""
+    return {"algorithms": ALGORITHMS}
 
 if __name__ == "__main__":
     import uvicorn
