@@ -15,7 +15,7 @@ import ChallengesModal from './components/ChallengesModal.jsx'
 import BadgeToast from './components/BadgeToast.jsx'
 import AlgorithmWalkthrough from './components/AlgorithmWalkthrough.jsx'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'https://quantum-entanglement-visualizer.onrender.com'
 
 const TABS = [
   { id: 'bloch',         label: '⊕ Bloch Spheres' },

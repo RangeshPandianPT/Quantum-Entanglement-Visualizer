@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'https://quantum-entanglement-visualizer.onrender.com'
 
 export default function AlgorithmWalkthrough({ onCircuitResult, disabled }) {
   const [algorithms, setAlgorithms] = useState([])

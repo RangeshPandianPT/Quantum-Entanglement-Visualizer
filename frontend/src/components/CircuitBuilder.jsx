@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } fro
 import axios from 'axios'
 import MeasurementResult from './MeasurementResult.jsx'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'https://quantum-entanglement-visualizer.onrender.com'
 
 /* ── Gate definitions ──────────────────────────────── */
 const GATES = [
