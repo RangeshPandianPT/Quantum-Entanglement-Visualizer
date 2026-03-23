@@ -1,0 +1,10 @@
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+# Redirect all routing to index.html for React SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
