@@ -13,6 +13,7 @@ import StateNotation from './components/StateNotation.jsx'
 import VizTooltip from './components/VizTooltip.jsx'
 import ChallengesModal from './components/ChallengesModal.jsx'
 import BadgeToast from './components/BadgeToast.jsx'
+import AlgorithmWalkthrough from './components/AlgorithmWalkthrough.jsx'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -279,6 +280,12 @@ export default function App() {
           activePuzzle={activePuzzle}
           onClearPuzzle={() => setActivePuzzle(null)}
           onEarnBadge={handleEarnBadge}
+        />
+
+        {/* ── Algorithm Walkthrough ────────────── */}
+        <AlgorithmWalkthrough
+          onCircuitResult={handleCircuitResult}
+          disabled={!!activePuzzle}
         />
 
         {/* ── Divider ─────────────────────────── */}
