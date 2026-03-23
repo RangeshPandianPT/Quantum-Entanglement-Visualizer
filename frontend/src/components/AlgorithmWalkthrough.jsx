@@ -21,27 +21,6 @@ export default function AlgorithmWalkthrough({ onCircuitResult, disabled }) {
   }, [])
 
   // Auto-play effect
-  useEffect(() => {
-    let timer = null
-    if (isPlaying && activeAlgo && !loading) {
-      if (stepIndex < activeAlgo.gates.length - 1) {
-        timer = setTimeout(() => {
-          handleStep(stepIndex + 1)
-        }, 2500) // 2.5 seconds per step
-      } else {
-        setIsPlaying(false) // Reached the end
-      }
-    }
-    return () => clearInterval(timer)
-  }, [isPlaying, stepIndex, activeAlgo, loading, handleStep])
-
-  const handleSelectAlgo = (algo) => {
-    setActiveAlgo(algo)
-    setStepIndex(-1)
-    setIsPlaying(false)
-    setError(null)
-  }
-
   const handleStep = useCallback(async (idx) => {
     if (!activeAlgo || idx < 0 || idx >= activeAlgo.gates.length) return
     setLoading(true)
@@ -64,6 +43,27 @@ export default function AlgorithmWalkthrough({ onCircuitResult, disabled }) {
       setLoading(false)
     }
   }, [activeAlgo, onCircuitResult])
+
+  useEffect(() => {
+    let timer = null
+    if (isPlaying && activeAlgo && !loading) {
+      if (stepIndex < activeAlgo.gates.length - 1) {
+        timer = setTimeout(() => {
+          handleStep(stepIndex + 1)
+        }, 2500) // 2.5 seconds per step
+      } else {
+        setIsPlaying(false) // Reached the end
+      }
+    }
+    return () => clearInterval(timer)
+  }, [isPlaying, stepIndex, activeAlgo, loading, handleStep])
+
+  const handleSelectAlgo = (algo) => {
+    setActiveAlgo(algo)
+    setStepIndex(-1)
+    setIsPlaying(false)
+    setError(null)
+  }
 
   const handlePlayPause = () => {
     if (stepIndex >= activeAlgo.gates.length - 1) {
