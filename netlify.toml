@@ -1,6 +1,6 @@
 [build]
-  command = "cd frontend && npm install && npm run build"
-  publish = "frontend/dist"
+  command = "npm install && npm run build"
+  publish = "dist"
 
 # Redirect all routing to index.html for React SPA
 [[redirects]]
