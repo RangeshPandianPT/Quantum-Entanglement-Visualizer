@@ -1,6 +1,9 @@
 [build]
-  command = "npm install && npm run build"
+  command = "npx pnpm install && npm run build"
   publish = "dist"
+
+[build.environment]
+  NPM_FLAGS="--legacy-peer-deps"
 
 # Redirect all routing to index.html for React SPA
 [[redirects]]
