@@ -14,8 +14,7 @@ import VizTooltip from './components/VizTooltip.jsx'
 import ChallengesModal from './components/ChallengesModal.jsx'
 import BadgeToast from './components/BadgeToast.jsx'
 import AlgorithmWalkthrough from './components/AlgorithmWalkthrough.jsx'
-
-const API_BASE = 'https://quantum-entanglement-visualizer.onrender.com'
+import AIAssistant from './components/AIAssistant.jsx'
 
 const TABS = [
   { id: 'bloch',         label: '⊕ Bloch Spheres' },
@@ -434,6 +433,9 @@ export default function App() {
         show={!!toastBadge} 
         onClose={() => setToastBadge(null)} 
       />
-    </div>
-  )
-}
+
+      <AIAssistant 
+        circuit={circuitResult?.circuit || []} 
+        numQubits={vizDetail?.qubits || 2} 
+        currentStateDetails={vizDetail} 
+      />
