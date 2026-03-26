@@ -668,6 +668,58 @@ def get_algorithms():
     """Returns the list of famous quantum algorithms with predefined step-by-step walkthroughs."""
     return {"algorithms": ALGORITHMS}
 
+class AssistantRequest(BaseModel):
+    query: str
+    circuit: Optional[List[dict]] = None
+    num_qubits: Optional[int] = None
+    state_info: Optional[str] = None
+
+@app.post("/api/assistant")
+async def assistant_endpoint(req: AssistantRequest):
+    q = req.query.lower()
+    
+    # Error detection logic
+    error_msg = None
+    if req.circuit:
+        has_h = any(g.get("gate", "").lower() == "h" for g in req.circuit)
+        has_cx = any(g.get("gate", "").lower() == "cx" for g in req.circuit)
+        if has_cx and not has_h:
+            error_msg = "I noticed you added a CNOT gate but no Hadamard gate. Without placing the control qubit in superposition first, the CNOT just acts as a classical XOR and won't create quantum entanglement! Try placing an H gate before your CX."
+    
+    # 3. Error check query
+    if "error" in q or "mistake" in q or "wrong" in q or "invalid" in q:
+        if error_msg:
+            return {"reply": f"Circuit analysis complete. {error_msg}"}
+        return {"reply": "Your circuit structure is valid! If you aren't getting the expected state, check if your control and target qubits on multi-qubit gates are placed correctly."}
+
+    # 1. Natural Language Concept Explanation
+    if "not entangled" in q or "why aren't" in q or "why are my" in q:
+        if error_msg:
+            return {"reply": f"Your qubits are not entangled. {error_msg}"}
+        return {"reply": "Your qubits are not entangled because their states are completely independent of each other (a product state, or separable state). To create entanglement, you need a multi-qubit gate like CNOT (cx), and typically the control qubit needs to be in superposition."}
+    
+    # 2. Auto-circuit suggestions
+    if "maximum entanglement" in q or ("what gates" in q and "entanglement" in q):
+        return {"reply": "To create maximum entanglement (a Bell state), use these two steps:\n1. Apply a Hadamard (H) gate to one qubit (e.g., Qubit 0) to put it in superposition.\n2. Apply a CNOT (CX) gate with Qubit 0 as control and Qubit 1 as target.\nThis creates the |Φ+⟩ state!"}
+    
+    # 4. State recognition
+    if "what state" in q or "identify" in q or "recognize" in q:
+        info = req.state_info or ""
+        if "00" in info and "11" in info:
+            return {"reply": "It looks like your circuit is producing the Bell State |Φ+⟩ = (|00⟩ + |11⟩)/√2. This is a maximally entangled bipartite state!"}
+        if "000" in info and "111" in info:
+            return {"reply": "Your circuit is producing the GHZ State! A perfectly entangled 3-qubit GHZ state."}
+        if "001" in info and "010" in info and "100" in info:
+            return {"reply": "You've successfully created the W state! This state has robust entanglement that persists even if you lose one qubit."}
+        return {"reply": f"Your current state contains these major components: {info}. It's a superposition, but doesn't map to a standard named state like Bell or GHZ."}
+    
+    # General fallback
+    if error_msg:
+        prefix = "Notice: " + error_msg + " \n\n"
+    else:
+        prefix = ""
+    return {"reply": f"{prefix}That's an interesting quantum computing question! You can always try to experiment more by adding H and CX gates to see how visualization changes. How else can I assist you with your circuit?"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
