@@ -1,6 +1,6 @@
 [build]
-  command = "npx pnpm install && npm run build"
-  publish = "dist"
+  command = "cd frontend && npx pnpm install && npx pnpm run build"
+  publish = "frontend/dist"
 
 [build.environment]
   NPM_FLAGS="--legacy-peer-deps"
